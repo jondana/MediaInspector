@@ -98,6 +98,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
+import webbrowser
 
 _GLOBAL_APP_INSTANCE = None
 
@@ -845,6 +846,8 @@ class UniversalScrollHandler:
         self.report_scroller = report_scroller
         self.queue_canvas = queue_canvas
         self.report_textbox = report_textbox
+        self.manual_scroller = None
+        self.manual_view = None
 
         for seq in ("<MouseWheel>", "<TouchpadScroll>", "<Button-4>", "<Button-5>"):
             try:
@@ -886,6 +889,10 @@ class UniversalScrollHandler:
             if is_inside(self.report_textbox) or (hasattr(self.report_textbox, "_textbox") and is_inside(self.report_textbox._textbox)):
                 if self.report_scroller:
                     self.report_scroller.handle_wheel_input(delta)
+                return "break"
+            if getattr(self, "manual_view", None) and (is_inside(self.manual_view) or (hasattr(self.manual_view, "_textbox") and is_inside(self.manual_view._textbox))):
+                if getattr(self, "manual_scroller", None):
+                    self.manual_scroller.handle_wheel_input(delta)
                 return "break"
         except Exception:
             pass
@@ -1011,6 +1018,173 @@ class MediaInspectorApp:
             self.btn_toggle_queue.configure(text="Queue ▸", fg_color=NEUTRAL_BTN, hover_color=NEUTRAL_BTN_HOVER)
         self.root.after(50, lambda: self._reflow_badges(force=True))
 
+    def open_user_manual(self):
+        if hasattr(self, "_manual_window") and self._manual_window and self._manual_window.winfo_exists():
+            self._manual_window.lift()
+            self._manual_window.focus_force()
+            return
+
+        # Center the manual directly over the main window
+        self.root.update_idletasks()
+        rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        w_manual = min(740, max(640, rw))
+        h_manual = min(860, max(600, rh))
+        pos_x = max(0, rx + (rw - w_manual) // 2)
+        pos_y = max(0, ry + (rh - h_manual) // 2)
+
+        win = ctk.CTkToplevel(self.root)
+        win.withdraw()
+        self._manual_window = win
+        win.title("MediaInspector - User Manual & Guide")
+        win.geometry(f"{w_manual}x{h_manual}+{pos_x}+{pos_y}")
+        win.minsize(640, 560)
+        win.configure(fg_color=BG_MAIN)
+
+        top_bar = ctk.CTkFrame(win, fg_color="transparent")
+        top_bar.pack(fill="x", padx=16, pady=(12, 8))
+
+        lbl_top = ctk.CTkLabel(
+            top_bar, text="MediaInspector User Manual",
+            font=ctk.CTkFont(family="SF Pro Display", size=17, weight="bold"),
+            text_color=TEXT_PRIMARY
+        )
+        lbl_top.pack(side="left")
+
+        btn_kofi = ctk.CTkButton(
+            top_bar, text="☕ Support on Ko-fi", width=145, height=30, corner_radius=8,
+            fg_color=NEUTRAL_BTN, hover_color=NEUTRAL_BTN_HOVER, text_color=TEXT_PRIMARY,
+            font=ctk.CTkFont(family="SF Pro Text", size=12, weight="bold"),
+            command=lambda: webbrowser.open("https://ko-fi.com/jondana")
+        )
+        btn_kofi.pack(side="right")
+
+        manual_text = ctk.CTkTextbox(
+            win,
+            font=ctk.CTkFont(family="SF Pro Text", size=13),
+            fg_color="#0e0e0e",
+            text_color="#e0e0e0",
+            corner_radius=8,
+            border_width=1,
+            border_color="#1e1e1e",
+            wrap="word"
+        )
+        manual_text.pack(fill="both", expand=True, padx=16, pady=(0, 10))
+
+        def get_manual_metrics():
+            tb_inner = getattr(manual_text, "_textbox", None)
+            if not tb_inner or not tb_inner.winfo_ismapped(): return None
+            view_h = float(tb_inner.winfo_height())
+            if view_h <= 0: return None
+            top_frac, bot_frac = tb_inner.yview()
+            vis_frac = max(0.0001, bot_frac - top_frac)
+            return (view_h, view_h, 0.0) if vis_frac >= 0.9999 else (view_h, view_h / vis_frac, top_frac)
+
+        manual_scroller = QuartzKineticScroller(
+            get_view_metrics=get_manual_metrics,
+            set_view_fraction=lambda f: getattr(manual_text, "_textbox").yview_moveto(f) if getattr(manual_text, "_textbox", None) else None,
+            after_fn=manual_text.after,
+            cancel_after_fn=manual_text.after_cancel
+        )
+
+        if hasattr(self, "scroll_handler"):
+            self.scroll_handler.manual_scroller = manual_scroller
+            self.scroll_handler.manual_view = manual_text
+
+        def _on_manual_wheel(event):
+            try:
+                raw_delta = getattr(event, "delta", 0)
+                if getattr(event, "num", None) == 4: raw_delta = 1
+                elif getattr(event, "num", None) == 5: raw_delta = -1
+                if raw_delta != 0:
+                    manual_scroller.handle_wheel_input(float(raw_delta))
+                    return "break"
+            except Exception:
+                pass
+
+        for seq in ("<MouseWheel>", "<TouchpadScroll>", "<Button-4>", "<Button-5>"):
+            try:
+                win.bind(seq, _on_manual_wheel, add="+")
+                manual_text.bind(seq, _on_manual_wheel, add="+")
+                if hasattr(manual_text, "_textbox"):
+                    manual_text._textbox.bind(seq, _on_manual_wheel, add="+")
+            except Exception:
+                pass
+
+        tb = getattr(manual_text, "_textbox", manual_text)
+        tb.configure(state="normal", padx=20, pady=16)
+        tb.delete("1.0", "end")
+
+        tb.tag_configure("sec_h", font=("SF Pro Display", 14, "bold"), foreground=ULTRA_TEXT, spacing1=22, spacing3=6)
+        tb.tag_configure("sec_h_top", font=("SF Pro Display", 14, "bold"), foreground=ULTRA_TEXT, spacing1=2, spacing3=6)
+        tb.tag_configure("intro", font=("SF Pro Text", 12), foreground="#9aa4a9", spacing1=2, spacing2=4, spacing3=10, lmargin1=4, lmargin2=4)
+        tb.tag_configure("item", lmargin1=10, lmargin2=30, tabs=(30,), spacing1=3, spacing2=3, spacing3=5)
+        tb.tag_configure("bullet", font=("SF Pro Text", 12, "bold"), foreground=ULTRA_TEXT)
+        tb.tag_configure("val", font=("SF Pro Text", 12, "bold"), foreground=TEXT_PRIMARY)
+        tb.tag_configure("body", font=("SF Pro Text", 12), foreground="#c4cbcf")
+
+        sections = [
+            ("1. OVERVIEW & CAPABILITIES",
+             "MediaInspector is an ultra-fast, professional media analyzer engineered for film, video, and audio production workflows, providing deep technical inspection without indexing or preview stalls.",
+             [
+                 ("Broad Format Support", "Inspects video, audio, image formats, and professional containers (MOV, MP4, MKV, ProRes, RAW, WAV, FLAC, HEIC, PNG, etc.)."),
+                 ("Deep Stream Analysis", "Extracts container structure, codec profiles, resolution, CFR/VFR frame timing, chroma subsampling, bit depth, and bitrate."),
+                 ("Color Science & HDR", "Analyzes color primaries, transfer characteristics (PQ, HLG, SDR), matrix coefficients, and HDR10 mastering metadata.")
+             ]),
+
+            ("2. INTERFACE & WORKFLOW",
+             "Easily inspect individual clips or batch-analyze entire media directories.",
+             [
+                 ("Files Queue Drawer", "Toggle the collapsible left drawer using the 'Queue ▸/◂' button or the item count badge to switch between loaded files."),
+                 ("HUD Quick Specs", "Top stat badges summarize core parameters at a glance: Resolution, Bitrate, Frame Rate, Color Space, Audio, and File Size."),
+                 ("Copy & Export", "Review formatted stream metadata, click 'Copy' to copy to clipboard, or click 'Export' to save full text or raw JSON to disk.")
+             ]),
+
+            ("3. SHORTCUTS & NAVIGATION",
+             "Designed for speed and seamless integration with macOS.",
+             [
+                 ("Drag & Drop", "Drop media files or folders anywhere onto the window to inspect immediately."),
+                 ("Reveal in Finder", "Quickly reveal the active file directly in its Finder directory."),
+                 ("Kinetic Scrolling", "Fluid 120 FPS sub-pixel scrolling engine for effortless trackpad and wheel navigation through lengthy technical reports.")
+             ]),
+
+            ("4. SUPPORT & CONTRIBUTIONS",
+             "MediaInspector is free and open-source software built for creators and engineers.",
+             [
+                 ("Ko-fi Page", "https://ko-fi.com/jondana"),
+                 ("Author", "Jon Dana"),
+                 ("Contributions", "If MediaInspector saves you time and streamlines your production workflow, support on Ko-fi is warmly appreciated!")
+             ])
+        ]
+
+        for sec_idx, (sec_title, intro, items) in enumerate(sections):
+            h_tags = ("sec_h", "sec_h_top") if sec_idx == 0 else "sec_h"
+            tb.insert("end", f"{sec_title}\n", h_tags)
+            if intro:
+                tb.insert("end", f"{intro}\n", "intro")
+            for lbl, val in items:
+                sep = "" if lbl.endswith("?") else ":"
+                tb.insert("end", "•\t", ("bullet", "item"))
+                tb.insert("end", f"{lbl}{sep} ", ("val", "item"))
+                tb.insert("end", f"{val}\n", ("body", "item"))
+
+        tb.configure(state="disabled")
+        win.after(60, manual_scroller.sync_position)
+
+        bottom_bar = ctk.CTkFrame(win, fg_color="transparent")
+        bottom_bar.pack(fill="x", padx=16, pady=(6, 12))
+
+        btn_close = ctk.CTkButton(
+            bottom_bar, text="Close", width=90, height=32, corner_radius=8,
+            fg_color=NEUTRAL_BTN, hover_color=NEUTRAL_BTN_HOVER, text_color=TEXT_PRIMARY,
+            font=ctk.CTkFont(family="SF Pro Text", size=12, weight="bold"),
+            command=win.destroy
+        )
+        btn_close.pack(side="right")
+
+        win.deiconify()
+        win.after(100, lambda: (win.lift(), win.focus_force()))
+
     def setup_ui(self):
         # Master container
         self.main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
@@ -1020,13 +1194,17 @@ class MediaInspectorApp:
         header = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         header.pack(fill="x", pady=(0, 10))
 
-        title_lbl = ctk.CTkLabel(
+        self.title_lbl = ctk.CTkLabel(
             header,
             text="MediaInspector",
             font=ctk.CTkFont(family="SF Pro Display", size=18, weight="bold"),
-            text_color=TEXT_PRIMARY
+            text_color=TEXT_PRIMARY,
+            cursor="hand2"
         )
-        title_lbl.pack(side="left")
+        self.title_lbl.pack(side="left")
+        self.title_lbl.bind("<Button-1>", lambda e: self.open_user_manual())
+        self.title_lbl.bind("<Enter>", lambda e: self.title_lbl.configure(text_color=ULTRA_TEXT))
+        self.title_lbl.bind("<Leave>", lambda e: self.title_lbl.configure(text_color=TEXT_PRIMARY))
 
         self.btn_toggle_queue = ctk.CTkButton(
             header,
