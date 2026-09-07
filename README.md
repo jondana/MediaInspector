@@ -1,2 +1,10 @@
 # MediaInspector
-Modern macOS media inspector powered by FFprobe
+
+A standalone, lightweight macOS media stream inspector and metadata analyzer powered by **CustomTkinter** and embedded static **FFprobe**.
+
+## Features
+-  **Drag & Drop** media files, folders, or audio directly onto the dock icon or app window.
+-  **Comprehensive Stream Details**: Inspect video codecs, HDR metadata (color primaries, transfer characteristics), frame rates (CFR/VFR), audio sample rates, and bit depths.
+-  **Kinetic Scrolling**: Custom 120 FPS sub-pixel kinetic physics scrolling engine.
+-  **Zero External Dependencies**: Bundles its own self-contained static `ffprobe` binary.
+
