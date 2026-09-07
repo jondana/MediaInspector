@@ -1,4 +1,4 @@
-<img width="1460" height="1794" alt="Screenshot 2026-09-07 at 7 42 39 AM" src="https://github.com/user-attachments/assets/eec5cfa8-9caa-484d-9436-ff225015b67d" />
+<img width="1646" height="1800" alt="Screenshot 2026-09-07 at 10 11 41 AM" src="https://github.com/user-attachments/assets/c29da42a-ceae-46d5-892d-a9e216e68ccf" />
 
 # MediaInspector
 
