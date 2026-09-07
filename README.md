@@ -111,7 +111,7 @@ MediaInspector is open-source and free for filmmakers, colorists, and engineers.
 If MediaInspector saves you time or helps streamline your production pipeline,
 consider supporting ongoing development:
 
-License
+## License
 
 Distributed under the MIT License. See LICENSE for details.
 
