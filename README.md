@@ -62,7 +62,7 @@ Unlike general video players or generic metadata viewers, MediaInspector pulls d
 ## Installation
 
 ### Option 1: Pre-Built DMG
-1. Download the latest **`MediaInspector.dmg`** from [Releases](https://github.com/your-username/MediaInspector/releases).
+1. Download the latest **`MediaInspector.dmg`** from [Releases](https://github.com/jondana/MediaInspector/releases).
 2. Open the `.dmg` and drag **MediaInspector.app** into your `/Applications` folder.
 
 > [!IMPORTANT]
@@ -103,7 +103,7 @@ The script will automatically:
   - Generate high-resolution multi-scale Apple .icns icons.
   - Bundle everything via PyInstaller into MediaInspector.app and output a
     ready-to-distribute .dmg to your Desktop.
-
+```
 ☕ Support & Contributions
 
 MediaInspector is open-source and free for filmmakers, colorists, and engineers.
