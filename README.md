@@ -18,7 +18,7 @@
 
 ---
 
-## 🌟 Overview
+## Overview
 
 **MediaInspector** provides comprehensive, instant technical inspection of media files without indexing stalls, playback lag, or intrusive UI overhead. 
 
@@ -26,30 +26,30 @@ Unlike general video players or generic metadata viewers, MediaInspector pulls d
 
 ---
 
-## ⚡ Key Features
+##  Key Features
 
-- 🎯 **HUD Quick-Spec Chips**: Instant at-a-glance stat cards for **Resolution**, **Bitrate**, **Frame Rate** (CFR/VFR status), **Color Space & HDR** (PQ/HLG, primaries, bit depth), **Audio**, and **File Size**.
-- 🗂️ **Collapsible Multi-File Queue**:
+-  **HUD Quick-Spec Chips**: Instant at-a-glance stat cards for **Resolution**, **Bitrate**, **Frame Rate** (CFR/VFR status), **Color Space & HDR** (PQ/HLG, primaries, bit depth), **Audio**, and **File Size**.
+-  **Collapsible Multi-File Queue**:
   - Slide-out drawer displaying all queued media files with dynamic mini-spec badges.
   - Viewport-culled canvas rendering for butter-smooth navigation even when loading hundreds of clips.
   - Add single files, batches, or recursive directories in one drop.
-- 🔬 **Deep Technical Inspection**:
+-  **Deep Technical Inspection**:
   - **General**: Container syntax, file size in bytes/GB, exact duration, bitrates, and capture timestamps.
   - **Video Streams**: Codec, profile & level, dimensions + common industry labels (4K UHD, DCI, FHD), display aspect ratio, bit depth, chroma subsampling (4:2:0, 4:2:2, 4:4:4), color primaries, transfer functions, and color range (TV / Full).
   - **Audio Streams**: Codecs, bitrates, sample rates (kHz), lossless indicators, channel counts, layouts (Mono, Stereo, 5.1), and language tagging.
   - **Images & Covers**: Identification of embedded album covers, standalone images, and raw photography formats (megapixels, color spaces).
   - **Subtitles & Chapters**: Track layouts, languages, and formatted chapter timecode markers.
-- 🏎️ **Quartz 120 FPS Kinetic Scroll Engine**: Custom physics-based kinetic scrolling engine optimized for Apple trackpads and high-refresh ProMotion displays.
+-  **Quartz 120 FPS Kinetic Scroll Engine**: Custom physics-based kinetic scrolling engine optimized for Apple trackpads and high-refresh ProMotion displays.
 - 📋 **One-Click Copy & Export**: Copy cleanly formatted text reports directly to your clipboard or export detailed reports as `.txt` or raw `.json`.
 - 📁 **macOS Integration**:
   - Drag and drop onto the window or directly onto the macOS Dock icon.
   - Single-click **"Reveal in Finder"** to jump straight to source media.
   - Remembers window dimensions, position, and drawer state across launches.
-- 🔒 **100% Self-Contained**: No external dependencies. Bundles its own static, standalone `ffprobe` executable.
+-  **100% Self-Contained**: No external dependencies. Bundles its own static, standalone `ffprobe` executable.
 
 ---
 
-## 🎞️ Supported Formats
+##  Supported Formats
 
 | Category | File Extensions |
 | :--- | :--- |
@@ -59,7 +59,7 @@ Unlike general video players or generic metadata viewers, MediaInspector pulls d
 
 ---
 
-## 📥 Installation
+## Installation
 
 ### Option 1: Pre-Built DMG
 1. Download the latest **`MediaInspector.dmg`** from [Releases](https://github.com/your-username/MediaInspector/releases).
@@ -79,7 +79,7 @@ Unlike general video players or generic metadata viewers, MediaInspector pulls d
 
 ---
 
-## 🛠️ Building from Source
+## Building from Source
 
 To build a standalone `.app` and distributor `.dmg` on your Mac:
 
@@ -111,7 +111,7 @@ MediaInspector is open-source and free for filmmakers, colorists, and engineers.
 If MediaInspector saves you time or helps streamline your production pipeline,
 consider supporting ongoing development:
 
-📄 License
+License
 
 Distributed under the MIT License. See LICENSE for details.
 
