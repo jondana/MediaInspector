@@ -1,3 +1,4 @@
+<img width="1460" height="1794" alt="Screenshot 2026-09-07 at 7 42 39 AM" src="https://github.com/user-attachments/assets/eec5cfa8-9caa-484d-9436-ff225015b67d" />
 # MediaInspector
 
 A standalone, lightweight macOS media stream inspector and metadata analyzer powered by **CustomTkinter** and embedded static **FFprobe**.
