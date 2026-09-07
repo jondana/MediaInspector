@@ -104,7 +104,7 @@ The script will automatically:
   - Bundle everything via PyInstaller into MediaInspector.app and output a
     ready-to-distribute .dmg to your Desktop.
 ```
-Support & Contributions
+## Support & Contributions
 
 MediaInspector is open-source and free for filmmakers, colorists, and engineers.
 
