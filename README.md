@@ -40,8 +40,8 @@ Unlike general video players or generic metadata viewers, MediaInspector pulls d
   - **Images & Covers**: Identification of embedded album covers, standalone images, and raw photography formats (megapixels, color spaces).
   - **Subtitles & Chapters**: Track layouts, languages, and formatted chapter timecode markers.
 -  **Quartz 120 FPS Kinetic Scroll Engine**: Custom physics-based kinetic scrolling engine optimized for Apple trackpads and high-refresh ProMotion displays.
-- 📋 **One-Click Copy & Export**: Copy cleanly formatted text reports directly to your clipboard or export detailed reports as `.txt` or raw `.json`.
-- 📁 **macOS Integration**:
+-  **One-Click Copy & Export**: Copy cleanly formatted text reports directly to your clipboard or export detailed reports as `.txt` or raw `.json`.
+-  **macOS Integration**:
   - Drag and drop onto the window or directly onto the macOS Dock icon.
   - Single-click **"Reveal in Finder"** to jump straight to source media.
   - Remembers window dimensions, position, and drawer state across launches.
