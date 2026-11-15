@@ -98,7 +98,6 @@ import time
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
-import webbrowser
 
 _GLOBAL_APP_INSTANCE = None
 
@@ -239,7 +238,8 @@ def get_common_resolution_label(width, height):
     except Exception:
         return ""
     mapping = {
-        (7680, 4320): "8K UHD", (3840, 2160): "4K UHD", (4096, 2160): "DCI 4K",
+        (8192, 4320): "DCI 8K", (7680, 4320): "8K UHD", (6144, 3160): "6K",
+        (5120, 2880): "5K", (3840, 2160): "4K UHD", (4096, 2160): "DCI 4K",
         (2560, 1440): "2K QHD", (2048, 1080): "2K DCI", (1920, 1080): "Full HD 1080p",
         (1280, 720): "HD 720p", (720, 480): "NTSC 480p", (720, 576): "PAL 576p",
         (1080, 1920): "Vertical Full HD", (2160, 3840): "Vertical 4K"
@@ -520,11 +520,12 @@ class QuartzKineticScroller:
 # 120 FPS ULTRA-PERFORMANCE QUARTZ QUEUE CANVAS (WITH VIEWPORT CULLING)
 # ============================================================
 class QuartzQueueCanvas(tk.Canvas):
-    CARD_H = 104
+    CARD_H = 77
     CARD_GAP = 6
-    ROW_STEP = 110
+    ROW_STEP = 83
 
     def __init__(self, master, on_select_item=None, on_drop_files=None, **kwargs):
+        kwargs.setdefault("width", 1)
         super().__init__(master, bg=CARD_BG, bd=0, highlightthickness=0, relief="flat", **kwargs)
         self.on_select_item = on_select_item
         self.on_drop_files = on_drop_files
@@ -611,6 +612,35 @@ class QuartzQueueCanvas(tk.Canvas):
                 self.delete(f"card_row_{target}")
                 self._draw_row(target, self.items[target], w)
 
+    def ensure_visible(self, idx):
+        if idx < 0 or idx >= len(self.items):
+            return
+        view_h = float(self.winfo_height())
+        if view_h <= 1:
+            return
+        total_h = max(1.0, len(self.items) * self.ROW_STEP + 8.0)
+        if total_h <= view_h:
+            return
+        y1 = idx * self.ROW_STEP + 4.0
+        y2 = y1 + self.CARD_H
+        y_top = self.canvasy(0)
+        y_bot = self.canvasy(view_h)
+        new_y = None
+        if y1 < y_top + 4.0:
+            new_y = max(0.0, y1 - 4.0)
+        elif y2 > y_bot - 4.0:
+            new_y = min(total_h - view_h, y2 - view_h + 6.0)
+        if new_y is not None:
+            self.scroller.is_animating = False
+            if self.scroller._anim_job:
+                try:
+                    self.after_cancel(self.scroller._anim_job)
+                except Exception:
+                    pass
+                self.scroller._anim_job = None
+            self.yview_moveto(new_y / total_h)
+            self.scroller.sync_position()
+
     def update_badges(self, filepath, badges):
         if filepath in self.items:
             idx = self.items.index(filepath)
@@ -687,6 +717,11 @@ class QuartzQueueCanvas(tk.Canvas):
 
             if not self.scroller.is_animating:
                 self.scroller.sync_position()
+            if self._external_yscrollcommand:
+                try:
+                    self._external_yscrollcommand(*self.yview())
+                except Exception:
+                    pass
         finally:
             self._updating_viewport = False
 
@@ -770,55 +805,56 @@ class QuartzQueueCanvas(tk.Canvas):
         badges = cached[2] if cached and len(cached) >= 3 else []
 
         if not badges:
-            self.create_text((x1 + x2) / 2, y1 + 60, text="⏳ Analyzing metadata...", fill="#8e8e9a", font=("SF Pro Text", 9), tags=card_tag)
+            self.create_text((x1 + x2) / 2, y1 + 48, text="⏳ Analyzing metadata...", fill="#8e8e9a", font=("SF Pro Text", 9), tags=card_tag)
             return
 
-        chip_y_start = y1 + 28
+        if len(badges) >= 6:
+            if badges[1][0] == "Format":
+                rows = ([badges[0], badges[1], badges[3]], [badges[2], badges[5]])
+            else:
+                rows = ([badges[0], badges[2], badges[1]], [badges[3], badges[5]])
+        else:
+            rows = (badges[:3], badges[3:5]) if len(badges) > 3 else (badges,)
+
+        chip_y_start = y1 + 26
         chip_h = 20
         chip_gap_y = 4
         chip_gap_x = 4
         inner_w = (x2 - x1) - 16
-        col_w = (inner_w - chip_gap_x) / 2
 
-        num_badges = min(6, len(badges))
-        for i in range(num_badges):
-            b_info = badges[i]
-            if len(b_info) == 5:
-                _, val, bg_col, text_col, border_col = b_info
-            else:
-                val, bg_col, text_col = b_info[1], b_info[2], b_info[3]
-                border_col = "#2e3036"
-
-            r = i // 2
-            c = i % 2
-            is_full_span = (i == num_badges - 1 and c == 0)
-
-            cy1 = chip_y_start + r * (chip_h + chip_gap_y)
+        for r_idx, row_badges in enumerate(rows):
+            if not row_badges:
+                continue
+            n_chips = len(row_badges)
+            col_w = (inner_w - (n_chips - 1) * chip_gap_x) / n_chips
+            cy1 = chip_y_start + r_idx * (chip_h + chip_gap_y)
             cy2 = cy1 + chip_h
 
-            if is_full_span:
-                cx1 = x1 + 8
-                cx2 = x2 - 8
-            else:
-                cx1 = x1 + 8 + c * (col_w + chip_gap_x)
+            for c_idx, b_info in enumerate(row_badges):
+                if len(b_info) == 5:
+                    _, val, bg_col, text_col, border_col = b_info
+                else:
+                    val, bg_col, text_col = b_info[1], b_info[2], b_info[3]
+                    border_col = "#2e3036"
+
+                cx1 = x1 + 8 + c_idx * (col_w + chip_gap_x)
                 cx2 = cx1 + col_w
+                self._draw_rounded_rect(cx1, cy1, cx2, cy2, radius=5, fill=bg_col, outline=border_col, width=1, tags=card_tag)
 
-            self._draw_rounded_rect(cx1, cy1, cx2, cy2, radius=5, fill=bg_col, outline=border_col, width=1, tags=card_tag)
+                val_str = str(val)
+                if r_idx == 0 and c_idx == 0 and len(val_str) > 13 and " (" in val_str and val_str.endswith(")"):
+                    inner = val_str.split(" (", 1)[1][:-1]
+                    if "x" in inner:
+                        val_str = inner
+                elif r_idx == 0 and (val_str.endswith(" (CFR)") or val_str.endswith(" (VFR)")):
+                    val_str = val_str[:-6]
 
-            val_str = str(val)
-            chip_avail_w = max(24, cx2 - cx1 - 6)
-
-            # Dynamically auto-scale font size so long specs never truncate
-            font_sz = 9
-            if len(val_str) >= 22:
-                font_sz = 7
-            elif len(val_str) >= 16:
-                font_sz = 8
-
-            char_w = 4.5 if font_sz == 7 else (5.1 if font_sz == 8 else 5.8)
-            max_c_chars = max(6, int(chip_avail_w / char_w))
-            disp_val = val_str[:max_c_chars - 1] + "…" if len(val_str) > max_c_chars else val_str
-            self.create_text((cx1 + cx2) / 2, (cy1 + cy2) / 2, text=disp_val, fill=text_col, font=("SF Pro Text", font_sz, "bold"), anchor="center", tags=card_tag)
+                chip_avail_w = max(20, cx2 - cx1 - 6)
+                font_sz = 9 if len(val_str) < 12 else (8 if len(val_str) < 18 else 7)
+                char_w = 4.4 if font_sz == 7 else (5.0 if font_sz == 8 else 5.6)
+                max_c_chars = max(5, int(chip_avail_w / char_w))
+                disp_val = val_str[:max_c_chars - 1] + "…" if len(val_str) > max_c_chars else val_str
+                self.create_text((cx1 + cx2) / 2, (cy1 + cy2) / 2 - 1.0, text=disp_val, fill=text_col, font=("SF Pro Text", font_sz, "bold"), anchor="center", tags=card_tag)
 
     def _on_resize(self, event):
         self.redraw_all()
@@ -939,6 +975,8 @@ class MediaInspectorApp:
 
         self._save_timer = None
         self.root.bind("<Configure>", self._on_window_configure)
+        self.root.bind("<Up>", lambda e: self._navigate_queue(-1, e))
+        self.root.bind("<Down>", lambda e: self._navigate_queue(1, e))
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         try:
             self.root.createcommand("::tk::mac::Quit", self.on_closing)
@@ -950,19 +988,25 @@ class MediaInspectorApp:
         self.file_cards = []
         self.file_metadata_cache = {}
         self._probe_queue = queue.Queue()
+        self._probe_lock = threading.Lock()
+        self._probing_set = set()
         self._stop_probe_worker = False
         self.current_index = -1
         self.raw_json_data = None
         self.current_report_text = ""
         self.is_json_mode = False
 
-        threading.Thread(target=self._probe_queue_worker, daemon=True).start()
-
         self.setup_ui()
-        self.setup_drag_and_drop()
+        self.root.update_idletasks()
+        self.root.after(15, self._deferred_startup)
 
         if initial_files:
-            self.root.after(100, lambda: self.load_files(initial_files))
+            self.root.after(30, lambda: self.load_files(initial_files))
+
+    def _deferred_startup(self):
+        self.setup_drag_and_drop()
+        for _ in range(4):
+            threading.Thread(target=self._probe_queue_worker, daemon=True).start()
 
     def _on_window_configure(self, event):
         if event.widget == self.root:
@@ -1004,6 +1048,21 @@ class MediaInspectorApp:
         self._save_settings()
         self.root.destroy()
 
+    def _navigate_queue(self, step, event=None):
+        if event and event.widget.winfo_toplevel() != self.root:
+            return
+        if not self.file_list:
+            return "break"
+        if self.current_index < 0:
+            new_idx = 0 if step > 0 else len(self.file_list) - 1
+        else:
+            new_idx = max(0, min(len(self.file_list) - 1, self.current_index + step))
+        if new_idx != self.current_index:
+            self.select_file(new_idx)
+            if hasattr(self, "canvas_queue"):
+                self.canvas_queue.ensure_visible(new_idx)
+        return "break"
+
     def toggle_drawer(self):
         self.drawer_open = not self.drawer_open
         self.settings["drawer_open"] = self.drawer_open
@@ -1019,6 +1078,7 @@ class MediaInspectorApp:
         self.root.after(50, lambda: self._reflow_badges(force=True))
 
     def open_user_manual(self):
+        import webbrowser
         if hasattr(self, "_manual_window") and self._manual_window and self._manual_window.winfo_exists():
             self._manual_window.lift()
             self._manual_window.focus_force()
@@ -1282,8 +1342,8 @@ class MediaInspectorApp:
         self.detail_frame = ctk.CTkFrame(self.split_pane, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
         self.detail_frame.pack(side="right", fill="both", expand=True)
 
-        # Left File Drawer (Width expanded to 300px for clean badge chip grid)
-        self.drawer_frame = ctk.CTkFrame(self.split_pane, width=300, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
+        # Left File Drawer (Compact 275px width for high queue density)
+        self.drawer_frame = ctk.CTkFrame(self.split_pane, width=275, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color=CARD_BORDER)
         self.drawer_frame.pack_propagate(False)
 
         drawer_top_bar = ctk.CTkFrame(self.drawer_frame, fg_color="transparent")
@@ -1314,6 +1374,17 @@ class MediaInspectorApp:
         queue_wrap = ctk.CTkFrame(self.drawer_frame, fg_color="transparent")
         queue_wrap.pack(fill="both", expand=True, padx=6, pady=(0, 8))
 
+        self.queue_scrollbar = ctk.CTkScrollbar(
+            queue_wrap,
+            command=self._on_queue_scrollbar_drag,
+            fg_color="#141418",
+            button_color="#525260",
+            button_hover_color="#717182",
+            corner_radius=6,
+            width=12
+        )
+        self.queue_scrollbar.pack(side="right", fill="y", padx=(2, 0), pady=2)
+
         self.canvas_queue = QuartzQueueCanvas(
             queue_wrap,
             on_select_item=self.select_file,
@@ -1321,16 +1392,6 @@ class MediaInspectorApp:
         )
         self.canvas_queue.metadata_cache = self.file_metadata_cache
         self.canvas_queue.pack(side="left", fill="both", expand=True, padx=(0, 2), pady=0)
-
-        self.queue_scrollbar = ctk.CTkScrollbar(
-            queue_wrap,
-            command=self._on_queue_scrollbar_drag,
-            fg_color="transparent",
-            button_color="#262626",
-            button_hover_color="#333333",
-            width=10
-        )
-        self.queue_scrollbar.pack(side="right", fill="y", pady=0)
         self.canvas_queue.configure(yscrollcommand=self.queue_scrollbar.set)
 
         if self.drawer_open:
@@ -1366,6 +1427,19 @@ class MediaInspectorApp:
         )
         self.btn_export.pack(side="right", padx=(4, 0))
 
+        self.btn_json_toggle = ctk.CTkButton(
+            self.detail_top,
+            text="{ } JSON",
+            width=68,
+            height=26,
+            corner_radius=6,
+            fg_color=NEUTRAL_BTN,
+            hover_color=NEUTRAL_BTN_HOVER,
+            font=ctk.CTkFont(family="SF Pro Text", size=10, weight="bold"),
+            command=self.toggle_json_view
+        )
+        self.btn_json_toggle.pack(side="right", padx=(4, 0))
+
         self.lbl_active_title = ctk.CTkLabel(
             self.detail_top,
             text="No Media Selected",
@@ -1397,10 +1471,13 @@ class MediaInspectorApp:
 
         tb = getattr(self.report_text, "_textbox", self.report_text)
         try:
-            tb.configure(font=("SF Pro Text", 11), tabs=("170",))
-            tb.tag_configure("section", font=("SF Pro Display", 12, "bold"), foreground="#ffffff", spacing1=16, spacing3=3)
+            tb.configure(font=("SF Pro Text", 11), tabs=("118", "265", "383"))
+            tb.tag_configure("section", font=("SF Pro Display", 12, "bold"), foreground="#ffffff", spacing1=14, spacing3=3)
             tb.tag_configure("k_lbl", font=("SF Pro Text", 11), foreground="#8e8e9a")
             tb.tag_configure("v_txt", font=("SF Pro Text", 11, "bold"), foreground="#f4f4f6")
+            self._last_report_w = 0
+            self._last_report_2col = True
+            tb.bind("<Configure>", self._on_report_resize, add="+")
         except Exception:
             pass
 
@@ -1445,8 +1522,16 @@ class MediaInspectorApp:
         self.show_placeholder()
 
     def _on_queue_scrollbar_drag(self, *args):
+        scroller = self.canvas_queue.scroller
+        scroller.is_animating = False
+        if scroller._anim_job:
+            try:
+                self.canvas_queue.after_cancel(scroller._anim_job)
+            except Exception:
+                pass
+            scroller._anim_job = None
         self.canvas_queue.yview(*args)
-        self.canvas_queue.scroller.sync_position()
+        scroller.sync_position()
 
     def setup_drag_and_drop(self):
         if not HAS_TKDND:
@@ -1487,8 +1572,8 @@ class MediaInspectorApp:
 
     def clear_badges(self):
         if hasattr(self, "badges_bar"):
-            for w in self.badges_bar.winfo_children():
-                w.destroy()
+            for w in getattr(self, "_card_pool", []):
+                w.place_forget()
             self._badge_widgets = []
             self._last_badges_w = None
             self.badges_bar.configure(height=0)
@@ -1508,7 +1593,7 @@ class MediaInspectorApp:
                 avail_w = df_w - 24
         if avail_w <= 50:
             rw = self.root.winfo_width()
-            avail_w = (rw - 322) if rw > 350 else 538
+            avail_w = (rw - 297) if rw > 350 else 563
 
         if not force and getattr(self, "_last_badges_w", None) == avail_w:
             return
@@ -1521,7 +1606,7 @@ class MediaInspectorApp:
 
         gap_x = 6
         gap_y = 6
-        row_h = 30
+        row_h = 42
 
         def get_min_w(b):
             if hasattr(b, "_min_w"):
@@ -1606,36 +1691,52 @@ class MediaInspectorApp:
         self.badges_bar.configure(height=total_h)
 
     def add_stat_card(self, title, value, bg_col, text_col, border_col="#242424", reflow=True):
-        card = ctk.CTkFrame(
-            self.badges_bar,
-            fg_color=bg_col,
-            corner_radius=7,
-            border_width=1,
-            border_color=border_col
-        )
-        card.pack_propagate(False)
-
-        lbl_v = ctk.CTkLabel(
-            card,
-            text=str(value),
-            font=ctk.CTkFont(family="SF Pro Text", size=12, weight="bold"),
-            text_color="#f5f5f7",
-            anchor="w"
-        )
-        lbl_v.pack(side="left", padx=(10, 6))
-
-        lbl_t = ctk.CTkLabel(
-            card,
-            text=str(title).upper(),
-            font=ctk.CTkFont(family="SF Pro Text", size=9, weight="bold"),
-            text_color=text_col,
-            anchor="w"
-        )
-        lbl_t.pack(side="left", padx=(0, 10))
-
-        card._min_w = max(100, (len(str(value)) + len(str(title))) * 7 + 28)
+        if not hasattr(self, "_card_pool"):
+            self._card_pool = []
         if not hasattr(self, "_badge_widgets"):
             self._badge_widgets = []
+
+        idx = len(self._badge_widgets)
+        if idx < len(self._card_pool):
+            card = self._card_pool[idx]
+            card.configure(fg_color=bg_col, border_color=border_col)
+            card._lbl_t.configure(text=str(title).upper(), text_color=text_col)
+            card._lbl_v.configure(text=str(value))
+        else:
+            card = ctk.CTkFrame(
+                self.badges_bar,
+                fg_color=bg_col,
+                corner_radius=7,
+                border_width=1,
+                border_color=border_col
+            )
+            card.pack_propagate(False)
+
+            lbl_t = ctk.CTkLabel(
+                card,
+                text=str(title).upper(),
+                font=ctk.CTkFont(family="SF Pro Text", size=9, weight="bold"),
+                text_color=text_col,
+                anchor="w",
+                height=12
+            )
+            lbl_t.pack(fill="x", padx=10, pady=(4, 0))
+
+            lbl_v = ctk.CTkLabel(
+                card,
+                text=str(value),
+                font=ctk.CTkFont(family="SF Pro Text", size=12, weight="bold"),
+                text_color="#f5f5f7",
+                anchor="w",
+                height=16
+            )
+            lbl_v.pack(fill="x", padx=10, pady=(0, 4))
+
+            card._lbl_t = lbl_t
+            card._lbl_v = lbl_v
+            self._card_pool.append(card)
+
+        card._min_w = max(112, max(len(str(value)) * 7, len(str(title)) * 6) + 24)
         self._badge_widgets.append(card)
 
         if reflow:
@@ -1670,12 +1771,21 @@ class MediaInspectorApp:
                 fp = self._probe_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if fp not in self.file_metadata_cache:
+            should_probe = False
+            with self._probe_lock:
+                if fp not in self.file_metadata_cache and fp not in self._probing_set:
+                    self._probing_set.add(fp)
+                    should_probe = True
+            if should_probe:
                 try:
                     res = self._probe_file(fp)
-                    self.file_metadata_cache[fp] = res
+                    with self._probe_lock:
+                        self.file_metadata_cache[fp] = res
                 except Exception:
                     pass
+                finally:
+                    with self._probe_lock:
+                        self._probing_set.discard(fp)
             if fp in self.file_metadata_cache:
                 data = self.file_metadata_cache[fp]
                 self.root.after(0, lambda p=fp, d=data: self._update_card_badges(p, d[2]))
@@ -1821,8 +1931,38 @@ class MediaInspectorApp:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _on_report_resize(self, event=None):
+        tb = getattr(self.report_text, "_textbox", self.report_text)
+        w = event.width if (event and getattr(event, "width", 0) > 20) else tb.winfo_width()
+        if w <= 20:
+            return
+        use_2col = (w >= 460)
+        if abs(w - getattr(self, "_last_report_w", 0)) > 4:
+            self._last_report_w = w
+            if use_2col:
+                mid = max(238, (w - 20) // 2)
+                tb.configure(tabs=(104, mid, mid + 102))
+            else:
+                tb.configure(tabs=("145",))
+        if use_2col != getattr(self, "_last_report_2col", True):
+            self._last_report_2col = use_2col
+            if self.current_report_text and not self.is_json_mode:
+                self.filter_report()
+
     def filter_report(self):
         tb = getattr(self.report_text, "_textbox", self.report_text)
+        w = tb.winfo_width()
+        if w <= 20:
+            rw = self.root.winfo_width()
+            w = rw - (325 if self.drawer_open else 50)
+        use_2col = (w >= 460)
+        self._last_report_2col = use_2col
+        if use_2col:
+            mid = max(238, (w - 20) // 2)
+            tb.configure(tabs=(104, mid, mid + 102))
+        else:
+            tb.configure(tabs=("145",))
+
         tb.configure(state="normal")
         tb.delete("1.0", "end")
 
@@ -1837,10 +1977,16 @@ class MediaInspectorApp:
                 elif "\t" in line:
                     parts = line.split("\t")
                     if len(parts) >= 4:
-                        tb.insert("end", parts[0] + "\t", "k_lbl")
-                        tb.insert("end", parts[1] + "\t", "v_txt")
-                        tb.insert("end", parts[2] + "\t", "k_lbl")
-                        tb.insert("end", parts[3] + "\n", "v_txt")
+                        if use_2col:
+                            tb.insert("end", parts[0] + "\t", "k_lbl")
+                            tb.insert("end", parts[1] + "\t", "v_txt")
+                            tb.insert("end", parts[2] + "\t", "k_lbl")
+                            tb.insert("end", parts[3] + "\n", "v_txt")
+                        else:
+                            tb.insert("end", parts[0] + "\t", "k_lbl")
+                            tb.insert("end", parts[1] + "\n", "v_txt")
+                            tb.insert("end", parts[2] + "\t", "k_lbl")
+                            tb.insert("end", parts[3] + "\n", "v_txt")
                     elif len(parts) >= 2:
                         tb.insert("end", parts[0] + "\t", "k_lbl")
                         tb.insert("end", parts[1] + "\n", "v_txt")
@@ -2024,6 +2170,8 @@ class MediaInspectorApp:
                 try: ch0 = int(a0.get("channels", 2) or 2)
                 except Exception: ch0 = 2
                 ch_str = "Mono" if ch0 == 1 else ("Stereo" if ch0 == 2 else f"{ch0}Ch")
+                if len(audio_streams) > 1:
+                    ch_str = f"{len(audio_streams)}x {ch_str}"
                 a_parts = [ac0] if ac0 else []
                 if ch_str: a_parts.append(ch_str)
                 if sr_k: a_parts.append(sr_k)
@@ -2074,23 +2222,27 @@ class MediaInspectorApp:
         lines = []
 
         def add_2col(k1, v1, k2="", v2=""):
-            if v1 is not None and str(v1).strip() != "":
-                lines.append(f"{k1}\t{v1}")
-            if k2 and v2 is not None and str(v2).strip() != "":
-                lines.append(f"{k2}\t{v2}")
+            has1 = v1 is not None and str(v1).strip() != ""
+            has2 = bool(k2) and v2 is not None and str(v2).strip() != ""
+            if has1 and has2 and len(str(v1)) <= 20:
+                lines.append(f"{k1}\t{v1}\t{k2}\t{v2}")
+            else:
+                if has1:
+                    lines.append(f"{k1}\t{v1}")
+                if has2:
+                    lines.append(f"{k2}\t{v2}")
 
         # GENERAL
         lines.append("GENERAL")
         fmt_long = fmt.get("format_long_name", "")
         fmt_name = fmt.get("format_name", "")
         container_disp = fmt_long.split(" (")[0] if fmt_long else fmt_name
-        add_2col("Container", container_disp)
-        gen_sz = format_bytes_size_str(file_size_bytes)
-        add_2col("File Size", gen_sz)
         gen_dur = format_detailed_duration(dur_sec) if (dur_sec and not is_picture_content) else "N/A"
-        add_2col("Duration", gen_dur)
+        add_2col("Container", container_disp, "Duration", gen_dur)
         gen_br = format_bitrate_str(fmt.get("bit_rate")) if (fmt.get("bit_rate") and not is_picture_content) else "N/A"
-        add_2col("Bitrate", gen_br)
+        streams_str = f"{len(pure_video_streams)}V / {len(audio_streams)}A" + (f" / {len(subtitle_streams)}S" if subtitle_streams else "")
+        add_2col("Bitrate", gen_br, "Streams", streams_str)
+        gen_sz = format_bytes_size_str(file_size_bytes)
         raw_date = fmt_tags.get("creation_time") or fmt_tags.get("date") or fmt_tags.get("com.apple.quicktime.creationdate")
         if not raw_date and pure_video_streams:
             v_tags = {str(k).lower(): v for k, v in pure_video_streams[0].get("tags", {}).items()}
@@ -2111,6 +2263,7 @@ class MediaInspectorApp:
             else:
                 c_date = first_d
         add_2col("Creation Date", c_date)
+        add_2col("File Size", gen_sz)
         lines.append("")
 
         # VIDEO STREAMS
@@ -2130,7 +2283,8 @@ class MediaInspectorApp:
 
             fps_val = parse_stream_fps_val(vs)
             fps_mode = get_frame_rate_mode(vs)
-            fps_disp = f"{fps_val:.3f} fps ({fps_mode})" if fps_val else "N/A"
+            fr_short = "CFR" if "CFR" in fps_mode else ("VFR" if "VFR" in fps_mode else fps_mode)
+            fps_disp = f"{fps_val:.3f} fps ({fr_short})" if fps_val else "N/A"
 
             dar = vs.get("display_aspect_ratio")
             if not dar and w and h and int(h) > 0:
@@ -2154,12 +2308,17 @@ class MediaInspectorApp:
             else:
                 range_disp = "N/A"
 
+            ctransfer = vs.get("color_transfer") or "N/A"
+            v_sbr = format_bitrate_str(vs.get("bit_rate")) if vs.get("bit_rate") else (vs.get("codec_tag_string") or "N/A")
+            v_sbr_lbl = "Stream Bitrate" if vs.get("bit_rate") else "Codec Tag"
+
             lines.append(f"VIDEO STREAM #{idx + 1}")
             add_2col("Codec / Profile", codec_prof, "Resolution", res_disp)
             add_2col("Frame Rate", fps_disp, "Aspect Ratio", dar_disp)
-            add_2col("Bit Depth", bd_disp, "Chroma Sampling", chroma)
-            add_2col("Color Primaries", cprim, "Matrix / Space", cspace)
-            add_2col("Color Range", range_disp)
+            add_2col("Chroma Sampling", chroma, "Bit Depth", bd_disp)
+            add_2col("Color Primaries", cprim, "Color Transfer", ctransfer)
+            add_2col("Matrix / Space", cspace, "Color Range", range_disp)
+            add_2col(v_sbr_lbl, v_sbr)
             lines.append("")
 
         # AUDIO STREAMS
@@ -2317,9 +2476,15 @@ echo "🔨 Running PyInstaller..."
 "$VENV_DIR/bin/pyinstaller" --windowed --noconfirm --clean \
     ${PYINSTALLER_ICON_ARG:+"$PYINSTALLER_ICON_ARG"} \
     --additional-hooks-dir=. \
+    --optimize 1 \
     --collect-all customtkinter \
     --collect-all tkinterdnd2 \
-    --collect-all tkinter \
+    --exclude-module tkinter.test \
+    --exclude-module test \
+    --exclude-module pydoc \
+    --exclude-module doctest \
+    --exclude-module http.server \
+    --exclude-module xmlrpc \
     --osx-bundle-identifier "com.local.mediainspector" \
     --name "MediaInspector" \
     media_inspector_gui.py
@@ -2409,7 +2574,12 @@ the quarantine tag so macOS treats it as a trusted local app.
 ======================================================================
 READMEEOF
 
-hdiutil create -volname "MediaInspector" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_PATH"
+diskutil eject "/Volumes/MediaInspector" 2>/dev/null || hdiutil detach "/Volumes/MediaInspector" -force 2>/dev/null || true
+if diskutil image 2>&1 | grep -q "create"; then
+    diskutil image create from --volumeName "MediaInspector" --format UDZO "$DMG_TMP" "$DMG_PATH"
+else
+    hdiutil create -volname "MediaInspector" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_PATH" || { sleep 2; hdiutil create -volname "MediaInspector" -srcfolder "$DMG_TMP" -ov -format UDZO "$DMG_PATH"; }
+fi
 rm -rf "$DMG_TMP"
 
 cd "$HOME"
