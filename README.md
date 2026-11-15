@@ -1,7 +1,8 @@
 # MediaInspector
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c29da42a-ceae-46d5-892d-a9e216e68ccf" alt="MediaInspector Screenshot" width="820"/>
+<img width="1666" height="1846" alt="Screenshot 2026-11-15 at 9 38 28 AM" src="https://github.com/user-attachments/assets/e77771d2-9869-40e9-88e8-ba64687d3887" />
+
 </p>
 
 <p align="center">
