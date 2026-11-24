@@ -476,6 +476,124 @@ def _iter_mp4_boxes(f, start, end):
         yield bname, pos + hdr_size, pos + size
         pos += size
 
+def _decode_udta_text(data):
+    if not data:
+        return ""
+    if len(data) >= 4 and data[0] == 0 and data[1] > 0:
+        qlen = struct.unpack(">H", data[0:2])[0]
+        if 1 <= qlen <= len(data) - 4:
+            sub = data[4:4 + qlen]
+            txt = sub.split(b"\x00", 1)[0].decode("utf-8", errors="ignore").strip()
+            if txt and all(ord(c) >= 32 for c in txt):
+                return txt
+    trimmed = data.lstrip(b"\x00")
+    s = trimmed.split(b"\x00", 1)[0].decode("utf-8", errors="ignore")
+    return "".join(c for c in s if ord(c) >= 32).strip()
+
+def _parse_exif_tiff(tiff_data, info):
+    if not tiff_data or len(tiff_data) < 8:
+        return
+    if tiff_data[:4] == b"II\x2a\x00":
+        endian = "<"
+    elif tiff_data[:4] == b"MM\x00\x2a":
+        endian = ">"
+    else:
+        return
+    type_sizes = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}
+
+    def read_ifd(ifd_off):
+        out = {}
+        if ifd_off < 8 or ifd_off + 2 > len(tiff_data):
+            return out
+        cnt = struct.unpack_from(endian + "H", tiff_data, ifd_off)[0]
+        for i in range(min(cnt, 256)):
+            epos = ifd_off + 2 + i * 12
+            if epos + 12 > len(tiff_data):
+                break
+            tag, typ, count = struct.unpack_from(endian + "HHI", tiff_data, epos)
+            vbytes = tiff_data[epos + 8:epos + 12]
+            tsz = type_sizes.get(typ)
+            if not tsz or count <= 0 or count > 65536:
+                continue
+            total = tsz * count
+            if total <= 4:
+                raw = vbytes[:total]
+            else:
+                doff = struct.unpack_from(endian + "I", vbytes, 0)[0]
+                if doff + total > len(tiff_data):
+                    continue
+                raw = tiff_data[doff:doff + total]
+            if typ == 2:
+                out[tag] = raw.split(b"\x00", 1)[0].decode("utf-8", errors="ignore").strip()
+            elif typ == 3:
+                out[tag] = struct.unpack_from(f"{endian}{count}H", raw, 0)
+            elif typ == 4:
+                out[tag] = struct.unpack_from(f"{endian}{count}I", raw, 0)
+            elif typ in (5, 10):
+                fc = "I" if typ == 5 else "i"
+                vals = []
+                for j in range(count):
+                    num, den = struct.unpack_from(f"{endian}2{fc}", raw, j * 8)
+                    vals.append((num / den) if den else 0.0)
+                out[tag] = tuple(vals)
+        return out
+
+    ifd0_off = struct.unpack_from(endian + "I", tiff_data, 4)[0]
+    ifd0 = read_ifd(ifd0_off)
+    if not ifd0:
+        return
+
+    if isinstance(ifd0.get(0x010F), str) and ifd0[0x010F]:
+        info.setdefault("make", ifd0[0x010F])
+    if isinstance(ifd0.get(0x0110), str) and ifd0[0x0110]:
+        info.setdefault("model", ifd0[0x0110])
+    if isinstance(ifd0.get(0x0131), str) and ifd0[0x0131]:
+        info.setdefault("firmware", ifd0[0x0131])
+    if isinstance(ifd0.get(0x013B), str) and ifd0[0x013B]:
+        info.setdefault("artist", ifd0[0x013B])
+
+    exif_ptr = ifd0.get(0x8769)
+    if isinstance(exif_ptr, tuple) and exif_ptr:
+        exif = read_ifd(exif_ptr[0])
+        if isinstance(exif.get(0x9003), str) and exif[0x9003]:
+            info.setdefault("date_original", exif[0x9003])
+        exp = exif.get(0x829A)
+        if isinstance(exp, tuple) and exp and exp[0] > 0:
+            ev = exp[0]
+            info.setdefault("shutter", f"1/{int(round(1.0 / ev))} s" if ev < 0.5 else f"{ev:.2f}".rstrip("0").rstrip(".") + " s")
+        fn = exif.get(0x829D)
+        if isinstance(fn, tuple) and fn and fn[0] > 0:
+            info.setdefault("aperture", f"f/{fn[0]:.1f}".rstrip("0").rstrip("."))
+        iso = exif.get(0x8827) or exif.get(0x8833)
+        if isinstance(iso, tuple) and iso:
+            info.setdefault("iso", str(iso[0]))
+        fl = exif.get(0x920A)
+        if isinstance(fl, tuple) and fl and fl[0] > 0:
+            info.setdefault("focal_length", f"{fl[0]:.1f}".rstrip("0").rstrip(".") + " mm")
+        lmake = exif.get(0xA433) if isinstance(exif.get(0xA433), str) else ""
+        lmod = exif.get(0xA434) if isinstance(exif.get(0xA434), str) else ""
+        if lmod:
+            full_lens = lmod if (not lmake or lmake.lower() in lmod.lower()) else f"{lmake} {lmod}"
+            info.setdefault("lens", full_lens)
+        if isinstance(exif.get(0xA431), str) and exif[0xA431]:
+            info.setdefault("serial", exif[0xA431])
+
+    gps_ptr = ifd0.get(0x8825)
+    if isinstance(gps_ptr, tuple) and gps_ptr:
+        gps = read_ifd(gps_ptr[0])
+        lat_v, lon_v = gps.get(0x0002), gps.get(0x0004)
+        if isinstance(lat_v, tuple) and len(lat_v) >= 3 and isinstance(lon_v, tuple) and len(lon_v) >= 3:
+            lat = lat_v[0] + lat_v[1] / 60.0 + lat_v[2] / 3600.0
+            lon = lon_v[0] + lon_v[1] / 60.0 + lon_v[2] / 3600.0
+            if str(gps.get(0x0001, "")).upper().startswith("S"):
+                lat = -abs(lat)
+            if str(gps.get(0x0003, "")).upper().startswith("W"):
+                lon = -abs(lon)
+            if lat != 0.0 or lon != 0.0:
+                alt_v = gps.get(0x0006)
+                alt_s = f" ({alt_v[0]:.0f}m)" if (isinstance(alt_v, tuple) and alt_v and alt_v[0] > 0) else ""
+                info.setdefault("gps", f"{lat:.4f}, {lon:.4f}{alt_s}")
+
 def _extract_xml_camera_tags(blob, info):
     if b"<NonRealTimeMeta" in blob or b"<Device " in blob:
         txt = blob.decode("utf-8", errors="ignore")
@@ -494,6 +612,18 @@ def _extract_xml_camera_tags(blob, info):
         m_gam = re.search(r'<Item\b[^>]*name="CaptureGammaEquation"[^>]*value="([^"]+)"', txt)
         if m_gam:
             info.setdefault("color_profile", m_gam.group(1).strip())
+    if b"<ClipMain" in blob or b"<ModelName>" in blob:
+        txt = blob.decode("utf-8", errors="ignore")
+        for pat, key in [
+            (r'<Manufacturer>([^<]+)</Manufacturer>', "make"),
+            (r'<ModelName>([^<]+)</ModelName>', "model"),
+            (r'<SerialNo>([^<]+)</SerialNo>', "serial"),
+            (r'<FirmwareVersion>([^<]+)</FirmwareVersion>', "firmware"),
+            (r'<Gamma>([^<]+)</Gamma>', "color_profile"),
+        ]:
+            m = re.search(pat, txt)
+            if m and m.group(1).strip():
+                info.setdefault(key, m.group(1).strip())
     if b"tiff:Make" in blob or b"tiff:Model" in blob or b"<?xpacket" in blob:
         txt = blob.decode("utf-8", errors="ignore")
         for pat, key in [
@@ -507,57 +637,92 @@ def _extract_xml_camera_tags(blob, info):
                 val = (m.group(1) or m.group(2) or "").strip()
                 if val:
                     info.setdefault(key, val)
+    if b"CNCV" in blob:
+        m_cn = re.search(rb'CNCV(Canon[^\x00]{3,48})', blob)
+        if m_cn:
+            info.setdefault("make", "Canon")
+            info.setdefault("software", m_cn.group(1).decode("ascii", errors="ignore").strip())
+    ex_idx = blob.find(b"Exif\x00\x00")
+    if ex_idx != -1:
+        _parse_exif_tiff(blob[ex_idx + 6:], info)
+    elif b"CMT1" in blob:
+        for hdr_sig in (b"II\x2a\x00", b"MM\x00\x2a"):
+            t_idx = blob.find(hdr_sig)
+            if t_idx != -1:
+                _parse_exif_tiff(blob[t_idx:], info)
+                break
 
 def _probe_mp4_camera_metadata(filepath):
     ext = os.path.splitext(filepath)[1].lower()
-    if ext not in (".mp4", ".mov", ".m4v", ".360", ".lrv", ".m4a"):
+    if ext not in (".mp4", ".mov", ".m4v", ".360", ".lrv", ".m4a", ".crm"):
         return {}
     info = {}
+    def _walk_udta(f, mstart, mend):
+        for uname, ustart, uend in _iter_mp4_boxes(f, mstart, mend):
+            ulen = uend - ustart
+            if ulen <= 0 or ulen > 2097152:
+                continue
+            f.seek(ustart)
+            data = f.read(ulen)
+            if uname == "GPMF":
+                gpmf = _parse_gpmf_kv(data)
+                if gpmf:
+                    info["gpmf"] = gpmf
+                    info.setdefault("make", "GoPro")
+                    if "MINF" in gpmf:
+                        info["model"] = str(gpmf["MINF"])
+                    if "FMWR" in gpmf:
+                        info["firmware"] = str(gpmf["FMWR"])
+                        info.setdefault("model", _infer_gopro_model_from_fw(gpmf["FMWR"]))
+                    if "CASN" in gpmf:
+                        info["serial"] = str(gpmf["CASN"])
+            elif uname == "FIRM":
+                fw = _decode_udta_text(data)
+                if fw:
+                    info.setdefault("make", "GoPro")
+                    info.setdefault("firmware", fw)
+                    info.setdefault("model", _infer_gopro_model_from_fw(fw))
+            elif uname in ("manu", "\xa9mak"):
+                val = _decode_udta_text(data)
+                if val: info.setdefault("make", val)
+            elif uname in ("modl", "\xa9mod", "CNMN"):
+                val = _decode_udta_text(data)
+                if val:
+                    if uname == "CNMN": info.setdefault("make", "Canon")
+                    info.setdefault("model", val)
+            elif uname in ("CNFV", "\xa9swr"):
+                val = _decode_udta_text(data)
+                if val: info.setdefault("firmware", val)
+            elif uname == "CNCV":
+                val = _decode_udta_text(data)
+                if val:
+                    info.setdefault("make", "Canon")
+                    info.setdefault("software", val)
+            elif uname == "\xa9xyz":
+                val = _decode_udta_text(data)
+                if val: info.setdefault("gps_raw", val)
+            else:
+                _extract_xml_camera_tags(data, info)
     try:
         file_len = os.path.getsize(filepath)
         with open(filepath, "rb") as f:
             for bname, bstart, bend in _iter_mp4_boxes(f, 0, file_len):
-                if bname in ("uuid", "XMP_", "xml ") and (bend - bstart) <= 524288:
+                if bname in ("uuid", "XMP_", "xml ") and (bend - bstart) <= 1048576:
                     f.seek(bstart)
                     _extract_xml_camera_tags(f.read(bend - bstart), info)
                 elif bname == "moov" and (bend - bstart) <= 33554432:
                     for mname, mstart, mend in _iter_mp4_boxes(f, bstart, bend):
                         if mname == "udta" and (mend - mstart) <= 4194304:
-                            for uname, ustart, uend in _iter_mp4_boxes(f, mstart, mend):
-                                ulen = uend - ustart
-                                if ulen <= 0 or ulen > 2097152:
-                                    continue
-                                f.seek(ustart)
-                                data = f.read(ulen)
-                                if uname == "GPMF":
-                                    gpmf = _parse_gpmf_kv(data)
-                                    if gpmf:
-                                        info["gpmf"] = gpmf
-                                        info.setdefault("make", "GoPro")
-                                        if "MINF" in gpmf:
-                                            info["model"] = str(gpmf["MINF"])
-                                        if "FMWR" in gpmf:
-                                            info["firmware"] = str(gpmf["FMWR"])
-                                            info.setdefault("model", _infer_gopro_model_from_fw(gpmf["FMWR"]))
-                                        if "CASN" in gpmf:
-                                            info["serial"] = str(gpmf["CASN"])
-                                elif uname == "FIRM":
-                                    fw = data.split(b"\x00", 1)[0].decode("ascii", errors="ignore").strip()
-                                    if fw:
-                                        info.setdefault("make", "GoPro")
-                                        info.setdefault("firmware", fw)
-                                        info.setdefault("model", _infer_gopro_model_from_fw(fw))
-                                elif uname in ("XMP_", "uuid", "xml "):
-                                    _extract_xml_camera_tags(data, info)
+                            _walk_udta(f, mstart, mend)
                         elif mname == "meta" and (mend - mstart) <= 1048576:
                             f.seek(mstart)
                             peek = f.read(min(8, mend - mstart))
                             sub_start = mstart + (4 if len(peek) >= 8 and peek[0:4] == b"\x00\x00\x00\x00" else 0)
                             for sname, sstart, send in _iter_mp4_boxes(f, sub_start, mend):
-                                if sname in ("XMP_", "uuid", "xml ") and (send - sstart) <= 524288:
+                                if sname in ("XMP_", "uuid", "xml ") and (send - sstart) <= 1048576:
                                     f.seek(sstart)
                                     _extract_xml_camera_tags(f.read(send - sstart), info)
-                        elif mname == "uuid" and (mend - mstart) <= 524288:
+                        elif mname in ("uuid", "XMP_", "xml ", "skip") and (mend - mstart) <= 1048576:
                             f.seek(mstart)
                             _extract_xml_camera_tags(f.read(mend - mstart), info)
     except Exception:
@@ -618,7 +783,6 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
     if software and str(software).lower().startswith("lavf"):
         software = None
 
-    # Fallback clues from encoder / handler_name (e.g. DJI, GoPro re-mux)
     if not model and not make:
         enc = str(all_tags.get("encoder") or "")
         hdl = str(all_tags.get("handler_name") or "")
@@ -626,11 +790,16 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
             hl = hint.lower()
             if "dji" in hl:
                 make = "DJI"
-                if len(hint) > 4:
-                    model = hint
+                if len(hint) > 4: model = hint
                 break
             elif "gopro" in hl:
                 make = "GoPro"
+                break
+            elif "canon" in hl:
+                make = "Canon"
+                break
+            elif "fuji" in hl:
+                make = "FUJIFILM"
                 break
 
     if make and str(make).lower() == "apple" and not model:
@@ -648,9 +817,8 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
         lens = _GOPRO_FOV_MAP.get(vf, vf)
 
     serial = mp4_info.get("serial") or all_tags.get("serial_number")
-    gps = _format_iso6709(all_tags.get("com.apple.quicktime.location.iso6709") or all_tags.get("location"))
+    gps = mp4_info.get("gps") or _format_iso6709(mp4_info.get("gps_raw") or all_tags.get("com.apple.quicktime.location.iso6709") or all_tags.get("location"))
 
-    # GoPro / Camera shooting parameters
     color_prof = mp4_info.get("color_profile")
     if not color_prof and "PTCL" in gpmf:
         ptcl = str(gpmf["PTCL"])
@@ -666,15 +834,18 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
     protune = "On" if gpmf.get("PRTN") == "Y" else ("Off" if gpmf.get("PRTN") == "N" else None)
     wb = str(gpmf["PTWB"]) if "PTWB" in gpmf else None
     sharp = str(gpmf["PTSH"]) if "PTSH" in gpmf else None
-    iso_range = None
-    if "PIMN" in gpmf and "PIMX" in gpmf:
+    iso_range = mp4_info.get("iso")
+    if not iso_range and "PIMN" in gpmf and "PIMX" in gpmf:
         iso_range = f"{gpmf['PIMN']} - {gpmf['PIMX']}"
-    elif all_tags.get("com.blackmagic-design.camera.iso"):
+    elif not iso_range and all_tags.get("com.blackmagic-design.camera.iso"):
         iso_range = str(all_tags.get("com.blackmagic-design.camera.iso"))
 
     ev_comp = f"{gpmf['PTEV']:+.1f}" if isinstance(gpmf.get("PTEV"), (int, float)) else (str(gpmf["PTEV"]) if "PTEV" in gpmf else None)
     zoom_val = f"{gpmf['DZMX']:.2f}x" if isinstance(gpmf.get("DZMX"), (int, float)) and gpmf.get("DZOM") == "Y" else None
     orient = _GOPRO_OREN_MAP.get(str(gpmf.get("OREN", "")), gpmf.get("OREN")) if "OREN" in gpmf else None
+    aperture = mp4_info.get("aperture")
+    shutter = mp4_info.get("shutter")
+    focal_length = mp4_info.get("focal_length")
 
     if make and model:
         badge_name = model if str(make).lower() in str(model).lower() else f"{make} {model}"
@@ -684,9 +855,10 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
     raw_export = {}
     for k, v in (
         ("make", make), ("model", model), ("firmware", firmware), ("serial", serial),
-        ("lens_fov", lens), ("stabilization", stab), ("color_profile", color_prof),
+        ("lens_fov", lens), ("focal_length", focal_length), ("aperture", aperture),
+        ("shutter", shutter), ("stabilization", stab), ("color_profile", color_prof),
         ("protune", protune), ("white_balance", wb), ("sharpness", sharp),
-        ("iso_range", iso_range), ("ev_comp", ev_comp), ("digital_zoom", zoom_val),
+        ("iso", iso_range), ("ev_comp", ev_comp), ("digital_zoom", zoom_val),
         ("orientation", orient), ("gps", gps), ("software", software)
     ):
         if v is not None:
@@ -699,6 +871,9 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
         "firmware": firmware,
         "serial": serial,
         "lens": lens,
+        "focal_length": focal_length,
+        "aperture": aperture,
+        "shutter": shutter,
         "stab": stab,
         "color_prof": color_prof,
         "protune": protune,
@@ -711,8 +886,8 @@ def _extract_camera_and_extra_meta(filepath, fmt, fmt_tags, streams):
         "gps": gps,
         "software": software,
         "title": all_tags.get("title"),
-        "artist": all_tags.get("artist"),
-        "has_details": bool(raw_export or all_tags.get("title") or all_tags.get("artist")),
+        "artist": mp4_info.get("artist") or all_tags.get("artist"),
+        "has_details": bool(raw_export or all_tags.get("title") or all_tags.get("artist") or mp4_info.get("artist")),
         "raw": raw_export,
     }
 
@@ -2622,10 +2797,12 @@ class MediaInspectorApp:
             lines.append("CAMERA & CAPTURE")
             add_2col("Camera Make", cam_meta.get("make"), "Camera Model", cam_meta.get("model"))
             add_2col("Firmware / OS", cam_meta.get("firmware"), "Serial Number", cam_meta.get("serial"))
-            add_2col("Lens / FOV", cam_meta.get("lens"), "Stabilization", cam_meta.get("stab"))
-            add_2col("Color Profile", cam_meta.get("color_prof"), "Protune", cam_meta.get("protune"))
-            add_2col("White Balance", cam_meta.get("wb"), "Sharpness", cam_meta.get("sharp"))
-            add_2col("ISO Range", cam_meta.get("iso_range"), "EV Comp", cam_meta.get("ev_comp"))
+            add_2col("Lens / FOV", cam_meta.get("lens"), "Focal Length", cam_meta.get("focal_length"))
+            add_2col("Aperture", cam_meta.get("aperture"), "Shutter Speed", cam_meta.get("shutter"))
+            add_2col("ISO", cam_meta.get("iso_range"), "EV Comp", cam_meta.get("ev_comp"))
+            add_2col("Color Profile", cam_meta.get("color_prof"), "Stabilization", cam_meta.get("stab"))
+            add_2col("Protune", cam_meta.get("protune"), "Sharpness", cam_meta.get("sharp"))
+            add_2col("White Balance", cam_meta.get("wb"))
             add_2col("Digital Zoom", cam_meta.get("zoom"), "Orientation", cam_meta.get("orient"))
             add_2col("GPS Location", cam_meta.get("gps"), "Writing App", cam_meta.get("software"))
             add_2col("Title", cam_meta.get("title"), "Artist", cam_meta.get("artist"))
